@@ -148,10 +148,15 @@ jobs:
       - name: Package
         run: ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/build/Lyric Fever.app" "$RUNNER_TEMP/LyricFever.zip"
 
+      # Artifact names can't contain a slash, and branch names routinely do.
+      - name: Compute artifact name
+        id: meta
+        run: echo "name=LyricFever-${{ inputs.configuration }}-$(echo '${{ inputs.ref }}' | tr '/' '-')" >> "$GITHUB_OUTPUT"
+
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: LyricFever-${{ inputs.configuration }}-${{ inputs.ref }}
+          name: ${{ steps.meta.outputs.name }}
           path: ${{ runner.temp }}/LyricFever.zip
           retention-days: 30
 
