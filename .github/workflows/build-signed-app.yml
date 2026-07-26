@@ -1,0 +1,154 @@
+# 构建签名版 Lyric Fever。
+#
+# 只用 workflow_dispatch 手动触发，这是刻意的：workflow 文件因此只需存在于这个 ci 分支上，
+# 构建时再 checkout 目标分支。功能分支不必携带任何 CI 文件，提给上游的 PR 里也就看不到
+# 这套东西。想构建哪个分支，触发时填 ref 即可。
+name: Build signed app
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "要构建的分支 / tag / commit"
+        required: true
+        default: main
+      configuration:
+        description: "构建配置"
+        required: true
+        default: Release
+        type: choice
+        options: [Release, Debug]
+
+env:
+  SIGNING_IDENTITY: n374 Local Signing
+  # 上游用 `branch = master` 引用 mediaremote-adapter，而 master 已经把
+  # MediaController(bundleIdentifier:) 改成了无参 init()，照抄上游的依赖声明会拉到不兼容的
+  # 版本、编译不过（上游 main 目前对任何全新 clone 都是这个状态）。这是最后一个仍带
+  # bundleIdentifier 参数的提交。
+  MEDIAREMOTE_ADAPTER_REVISION: 62a39cf1618a802340ef5267da72d3e3c7871994
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout ${{ inputs.ref }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          sw_vers
+
+      # Xcode 26 ships the Metal compiler as a separate download. Without it the project's
+      # .metal shader (the fullscreen background) fails to compile. Already present on some
+      # images, hence the tolerated failure.
+      - name: Ensure Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || echo "MetalToolchain 不可用或已内置，继续"
+
+      # Pin the dependency in the project file rather than in Package.resolved: Package.resolved
+      # is gitignored upstream, and a branch requirement would re-resolve to master's tip anyway.
+      # Rewriting the requirement to a fixed revision is the only form SPM can't drift from.
+      # Done here in the CI checkout only, so no branch ever carries this edit.
+      - name: Pin mediaremote-adapter to a compatible revision
+        run: |
+          python3 - <<'PYTHON'
+          import re, sys, os
+
+          path = "Lyric Fever.xcodeproj/project.pbxproj"
+          revision = os.environ["MEDIAREMOTE_ADAPTER_REVISION"]
+          source = open(path).read()
+
+          # Match the requirement block of the mediaremote-adapter package reference only.
+          pattern = re.compile(
+              r'(repositoryURL = "https://github\.com/ejbills/mediaremote-adapter";\s*'
+              r'requirement = \{)[^}]*(\};)',
+              re.S,
+          )
+          replacement = r'\1\n\t\t\t\tkind = revision;\n\t\t\t\trevision = %s;\n\t\t\t\2' % revision
+          patched, count = pattern.subn(replacement, source)
+          if count != 1:
+              sys.exit(f"期望改写 1 处 mediaremote-adapter 依赖声明，实际 {count} 处")
+
+          open(path, "w").write(patched)
+          print(f"已将 mediaremote-adapter 锁定到 {revision}")
+          PYTHON
+
+      - name: Import signing certificate
+        env:
+          P12_BASE64: ${{ secrets.SIGNING_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+
+          echo -n "$P12_BASE64" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          # Lets codesign use the key without an interactive prompt, which would hang the runner
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" > /dev/null
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+
+          rm -f "$CERT_PATH"
+          security find-identity -p codesigning "$KEYCHAIN_PATH"
+
+      # ENABLE_HARDENED_RUNTIME=NO: hardened runtime requires the process and every library it
+      # loads to share a Team ID. Sparkle.framework carries its upstream signature and a
+      # self-signed certificate has no Team ID, so leaving it on makes dyld refuse to load it.
+      # -skipMacroValidation: the ObservableUserDefault macro needs explicit approval off-GUI.
+      - name: Build
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project "Lyric Fever.xcodeproj" \
+            -scheme SpotifyLyricsInMenubar \
+            -configuration "${{ inputs.configuration }}" \
+            -destination 'platform=macOS,arch=arm64' \
+            -skipMacroValidation \
+            CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            ENABLE_HARDENED_RUNTIME=NO \
+            CONFIGURATION_BUILD_DIR="$RUNNER_TEMP/build" \
+            build
+
+      - name: Verify signature
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/build/Lyric Fever.app"
+          codesign --verify --deep --strict "$APP"
+          echo "--- designated requirement ---"
+          # Must name the certificate, not a cdhash. A cdhash-bound requirement changes with every
+          # build, and macOS then treats each build as a different app and re-asks for the
+          # automation permission that drives Spotify / Apple Music.
+          codesign -d -r- "$APP" 2>&1 | tail -1
+
+      # ditto rather than zip: it preserves the bundle's symlinks, resource forks and signature.
+      - name: Package
+        run: ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/build/Lyric Fever.app" "$RUNNER_TEMP/LyricFever.zip"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: LyricFever-${{ inputs.configuration }}-${{ inputs.ref }}
+          path: ${{ runner.temp }}/LyricFever.zip
+          retention-days: 30
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ~/Library/Developer/Xcode/DerivedData/**/Logs/Build/*.xcactivitylog
+          retention-days: 7
+          if-no-files-found: ignore
