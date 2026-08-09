@@ -255,7 +255,7 @@ import MediaRemoteAdapter
     var lyricsIsEmptyPostLoad: Bool = true
     
     #if os(macOS)
-    // UI element used to hide if karaokeModeHoveringSetting is true
+    // Set by KaraokeView.shouldHideForHover; true hides the karaoke panel (see displayKaraoke)
     var karaokeModeHovering: Bool = false
     
     #endif

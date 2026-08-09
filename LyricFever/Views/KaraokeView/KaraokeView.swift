@@ -384,6 +384,25 @@ struct KaraokeView: View {
         }
     }
 
+    // MARK: - Hover / drag behaviour
+
+    // Command is read once, at the instant the mouse arrives — not polled while it dwells — so
+    // this stays a single NSEvent.modifierFlags query with no timer, global monitor, or
+    // Accessibility permission involved. See KaraokeWindowInteractionMode.commandToDrag for the
+    // resulting trade-off: pressing or releasing Command after the mouse has already arrived has
+    // no effect until it leaves and comes back.
+    func shouldHideForHover(_ hover: Bool) -> Bool {
+        let mode = KaraokeWindowInteractionMode(rawValue: viewmodel.userDefaultStorage.karaokeWindowInteractionMode) ?? .alwaysDraggable
+        switch mode {
+        case .alwaysDraggable:
+            return false
+        case .hideOnHover:
+            return hover
+        case .commandToDrag:
+            return hover && !NSEvent.modifierFlags.contains(.command)
+        }
+    }
+
     @ViewBuilder
     var finalKaraokeView: some View {
         lyricsView()
@@ -404,9 +423,7 @@ struct KaraokeView: View {
            )
            .cornerRadius(16)
             .onHover { hover in
-                if viewmodel.userDefaultStorage.karaokeModeHoveringSetting {
-                    viewmodel.karaokeModeHovering = hover
-                }
+                viewmodel.karaokeModeHovering = shouldHideForHover(hover)
             }
             .multilineTextAlignment(.center)
             .frame(minWidth: Self.panelWidth, maxWidth: Self.panelWidth, minHeight: panelHeight, maxHeight: panelHeight, alignment: .center)

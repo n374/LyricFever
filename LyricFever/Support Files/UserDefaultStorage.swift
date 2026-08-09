@@ -53,9 +53,13 @@ class UserDefaultStorage {
     @ObservationIgnored var karaokeTransparency: Double
 //    var fixedKaraokeColorHex: String = "#2D3CCC"
     
-    // User setting: hide karaoke on hover
-    @ObservableUserDefault(.init(key: "karaokeModeHoveringSetting", defaultValue: false, store: .standard))
-    @ObservationIgnored var karaokeModeHoveringSetting: Bool
+    // User setting: how the karaoke panel responds to the mouse (raw value of
+    // KaraokeWindowInteractionMode). Reuses the pre-existing "karaokeModeHoveringSetting" storage
+    // key: UserDefaults reads an old Bool value back through `value(forKey:) as? Int` as 0/1, so
+    // upgrading users keep whichever of the first two modes (draggable / hide-on-hover) they'd
+    // already chosen, with no migration step needed.
+    @ObservableUserDefault(.init(key: "karaokeModeHoveringSetting", defaultValue: 0, store: .standard))
+    @ObservationIgnored var karaokeWindowInteractionMode: Int
     #endif
 
 //    @DefaultsKey(userDefaultsKey: "spDcCookie")

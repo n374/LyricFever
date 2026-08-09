@@ -14,7 +14,7 @@ struct KaraokeSettingsView: View {
     @Environment(ViewModel.self) var viewmodel
     @AppStorage("karaokeUseAlbumColor") var karaokeUseAlbumColor: Bool = true
     @AppStorage("fixedKaraokeColorHex") var fixedKaraokeColorHex: String = "#2D3CCC"
-    @AppStorage("karaokeModeHoveringSetting") var karaokeModeHoveringSetting: Bool = false
+    @AppStorage("karaokeModeHoveringSetting") var karaokeWindowInteractionMode: KaraokeWindowInteractionMode = .alwaysDraggable
     @AppStorage("karaokeShowMultilingual") var karaokeShowMultilingual: Bool = true
     @AppStorage("karaokeLineMode") var karaokeLineMode: KaraokeLineMode = .single
     @AppStorage("karaokeTransparency") var karaokeTransparency: Double = 50
@@ -32,10 +32,12 @@ struct KaraokeSettingsView: View {
             @Bindable var viewmodel = viewmodel
             Text("Karaoke Behaviour")
                 .font(.system(size: 15, weight: .bold))
-            Toggle(isOn: $karaokeModeHoveringSetting) {
-                Text("Hide Karaoke window when mouse passes by")
+            Picker("Karaoke window behaviour", selection: $karaokeWindowInteractionMode) {
+                ForEach(KaraokeWindowInteractionMode.allCases) { mode in
+                    Text(mode.localizedName).tag(mode)
+                }
             }
-            .toggleStyle(.checkbox)
+            .pickerStyle(.radioGroup)
             Toggle(isOn: $karaokeShowMultilingual) {
                 Text("Show multilingual lyrics when translating in Karaoke window")
             }
@@ -78,7 +80,7 @@ struct KaraokeSettingsView: View {
             
             .frame(width: 300, height: 24)
             Button("Reset to default") {
-                viewmodel.userDefaultStorage.karaokeModeHoveringSetting = false
+                viewmodel.userDefaultStorage.karaokeWindowInteractionMode = KaraokeWindowInteractionMode.alwaysDraggable.rawValue
                 karaokeUseAlbumColor = true
                 viewmodel.userDefaultStorage.karaokeShowMultilingual = true
                 viewmodel.userDefaultStorage.karaokeLineMode = KaraokeLineMode.single.rawValue
