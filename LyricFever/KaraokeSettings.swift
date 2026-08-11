@@ -12,7 +12,7 @@ import FontPicker
 
 struct KaraokeSettingsView: View {
     @Environment(ViewModel.self) var viewmodel
-    @AppStorage("karaokeUseAlbumColor") var karaokeUseAlbumColor: Bool = true
+    @AppStorage("karaokeUseAlbumColor") var karaokeBackgroundMode: KaraokeBackgroundMode = .albumColor
     @AppStorage("fixedKaraokeColorHex") var fixedKaraokeColorHex: String = "#2D3CCC"
     @AppStorage("karaokeModeHoveringSetting") var karaokeWindowInteractionMode: KaraokeWindowInteractionMode = .alwaysDraggable
     @AppStorage("karaokeShowMultilingual") var karaokeShowMultilingual: Bool = true
@@ -53,11 +53,13 @@ struct KaraokeSettingsView: View {
             Text("Karaoke Background Appearance")
                     .font(.system(size: 15, weight: .bold))
             
-            Toggle(isOn: $karaokeUseAlbumColor) {
-                Text("Use album color for Karaoke window")
+            Picker("Karaoke window background", selection: $karaokeBackgroundMode) {
+                ForEach(KaraokeBackgroundMode.allCases) { mode in
+                    Text(mode.localizedName).tag(mode)
+                }
             }
-            .toggleStyle(.checkbox)
-            if !karaokeUseAlbumColor {
+            .pickerStyle(.radioGroup)
+            if karaokeBackgroundMode == .fixedColor {
                 ColorPicker("Set a background color", selection: colorBinding, supportsOpacity: false)
             }
             Text("Opacity Level: \(Int(karaokeTransparency))%")
@@ -81,7 +83,7 @@ struct KaraokeSettingsView: View {
             .frame(width: 300, height: 24)
             Button("Reset to default") {
                 viewmodel.userDefaultStorage.karaokeWindowInteractionMode = KaraokeWindowInteractionMode.alwaysDraggable.rawValue
-                karaokeUseAlbumColor = true
+                karaokeBackgroundMode = .albumColor
                 viewmodel.userDefaultStorage.karaokeShowMultilingual = true
                 viewmodel.userDefaultStorage.karaokeLineMode = KaraokeLineMode.single.rawValue
                 viewmodel.userDefaultStorage.karaokeTransparency = 50
@@ -94,7 +96,7 @@ struct KaraokeSettingsView: View {
         }
 //        .padding(.vertical, 100)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.bouncy, value: karaokeUseAlbumColor)
+        .animation(.bouncy, value: karaokeBackgroundMode)
         .padding(.horizontal)
         .padding(.top, 100)
     }

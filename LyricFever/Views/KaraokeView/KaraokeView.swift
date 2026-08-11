@@ -33,7 +33,7 @@ struct KaraokeView: View {
     @Environment(\.floatingPanel) var floatingPanel
     @AppStorage("karaokeTransparency") var karaokeTransparency: Double = 50
     @AppStorage("karaokeShowMultilingual") var karaokeShowMultilingual: Bool = true
-    @AppStorage("karaokeUseAlbumColor") var karaokeUseAlbumColor: Bool = true
+    @AppStorage("karaokeUseAlbumColor") var karaokeBackgroundMode: KaraokeBackgroundMode = .albumColor
     @AppStorage("fixedKaraokeColorHex") var fixedKaraokeColorHex: String = "#2D3CCC"
     @AppStorage("karaokeLineMode") var karaokeLineMode: KaraokeLineMode = .single
 
@@ -406,21 +406,16 @@ struct KaraokeView: View {
     @ViewBuilder
     var finalKaraokeView: some View {
         lyricsView()
+            .textOutline()
             .lineLimit(2)
-            .foregroundStyle(.white)
             .minimumScaleFactor(0.9)
             .font(.custom(viewmodel.karaokeFont.fontName, size: viewmodel.karaokeFont.pointSize))
             .padding(10)
             .padding(.horizontal, 10)
             .background {
-               currentAlbumArt
-               .transition(.opacity)
-               .opacity(karaokeTransparency/100)
+               karaokeBackground
            }
 //           .drawingGroup()
-           .background(
-               VisualEffectView().ignoresSafeArea()
-           )
            .cornerRadius(16)
             .onHover { hover in
                 viewmodel.karaokeModeHovering = shouldHideForHover(hover)
@@ -448,9 +443,31 @@ struct KaraokeView: View {
             }
     }
 
+    @ViewBuilder
+    var karaokeBackground: some View {
+        switch karaokeBackgroundMode {
+        case .albumColor, .fixedColor:
+            ZStack {
+                VisualEffectView().ignoresSafeArea()
+                currentAlbumArt
+                    .transition(.opacity)
+                    .opacity(karaokeTransparency/100)
+            }
+        case .transparent:
+            // No color tint — just the frosted blur itself, faded by the same opacity slider the
+            // other two modes use for their color layer. Low values read as nearly see-through the
+            // desktop, high values as a more visible frosted panel.
+            VisualEffectView()
+                .ignoresSafeArea()
+                .opacity(karaokeTransparency/100)
+        }
+    }
+
     var currentAlbumArt: Color {
-        // ensure user wants to use album-derived color, and album-derived color exists
-        guard karaokeUseAlbumColor, let currentBackground = viewmodel.currentBackground else {
+        // Only reached for .albumColor / .fixedColor (see karaokeBackground); falls back to the
+        // fixed color whenever the album-derived one isn't ready yet, e.g. right after a song
+        // change, before its artwork has loaded.
+        guard karaokeBackgroundMode == .albumColor, let currentBackground = viewmodel.currentBackground else {
             return Color(NSColor(hexString: fixedKaraokeColorHex)!)
         }
         return currentBackground
