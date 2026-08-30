@@ -3,6 +3,9 @@
 # 只用 workflow_dispatch 手动触发，这是刻意的：workflow 文件因此只需存在于这个 ci 分支上，
 # 构建时再 checkout 目标分支。功能分支不必携带任何 CI 文件，提给上游的 PR 里也就看不到
 # 这套东西。想构建哪个分支，触发时填 ref 即可。
+#
+# 触发时填了 release_tag 就顺带发一个 GitHub Release（Release 资产不像 artifact 那样 30 天
+# 过期）；留空则只出 artifact。
 name: Build signed app
 
 on:
@@ -18,6 +21,10 @@ on:
         default: Release
         type: choice
         options: [Release, Debug]
+      release_tag:
+        description: "填了就发 GitHub Release 并打这个 tag（如 v3.4）；留空只出 artifact"
+        required: false
+        default: ""
 
 env:
   SIGNING_IDENTITY: n374 Local Signing
@@ -33,6 +40,10 @@ jobs:
     # @MainActor comes back as "unknown attribute".
     runs-on: macos-26
     timeout-minutes: 60
+
+    # 发 Release 要写权限。默认的只读 token 会让 gh release create 报 403。
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout ${{ inputs.ref }}
@@ -159,6 +170,45 @@ jobs:
           name: ${{ steps.meta.outputs.name }}
           path: ${{ runner.temp }}/LyricFever.zip
           retention-days: 30
+
+      # 只有触发时填了 release_tag 才发布。tag 打在实际构建的那个 commit 上（而不是分支当前
+      # 的 tip），否则 Release 声称的内容和包里的内容可能对不上。
+      - name: Publish GitHub Release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          SHA=$(git rev-parse HEAD)
+          APP="$RUNNER_TEMP/build/Lyric Fever.app"
+          VERSION=$(defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString)
+
+          # 已存在就停，不覆盖：覆盖会让已经下载过同名 tag 的人拿到内容不同的包。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG 已存在，拒绝覆盖。换个 tag 或先手动删除。"
+            exit 1
+          fi
+
+          ASSET="$RUNNER_TEMP/LyricFever-$VERSION.zip"
+          cp "$RUNNER_TEMP/LyricFever.zip" "$ASSET"
+
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          {
+            printf '自建签名版，由 `%s` 的 `%s` 构建（[run](%s/%s/actions/runs/%s)）。\n\n' \
+              "${{ inputs.ref }}" "$SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf '用自签证书 `%s` 签名，未经 Apple 公证。首次打开需在「系统设置 → 隐私与安全性」里放行。\n' \
+              "$SIGNING_IDENTITY"
+          } > "$NOTES_FILE"
+
+          gh release create "$TAG" "$ASSET" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "$VERSION" \
+            --notes-file "$NOTES_FILE"
+
+          echo "已发布 $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
       - name: Upload build log on failure
         if: failure()
